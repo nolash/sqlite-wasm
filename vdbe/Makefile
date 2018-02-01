@@ -8,9 +8,10 @@ CFLAGS=-g3
 
 all: opcodes obj
 	$(CC) $(INCLUDE) $(CFLAGS) -c  main.c -o main.o
-	$(CC) $(INCLUDE) $(CFLAGS) -DNDEBUG -DSQLITE_DEBUG $(LIB) -o main main.o opcodemap.o  -lsqlite3
+	$(CC) $(INCLUDE) $(CFLAGS) -DNDEBUG -DSQLITE_DEBUG $(LIB) -o main main.o opcodemap.o memhack.o -lsqlite3
 obj: 
 	$(CC) $(INCLUDE) $(CFLAGS) -c opcodemap.c -o  opcodemap.o
+	$(CC) $(INCLUDE) $(CFLAGS) -c memhack.c -o memhack.o
 sqlite:
 	$(CC) $(INCLUDE) $(CFLAGS) -c $(SQLITESRC)/vdbe.c -o vdbe.o
 opcodes:

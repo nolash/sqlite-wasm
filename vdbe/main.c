@@ -12,6 +12,11 @@
 char opcodemap[1024][32];
 int opcodecount;
 
+#include "memhack.h"
+
+sqlite3_mem_methods wasm_mem_methods;
+void *wasm_debugmem;
+
 #define BUFSIZE 1024
 #define MAXOPS 250000000
 #define TMPMEMCELLSIZE 1024 * 1024
@@ -25,15 +30,21 @@ int main(int argc, char **argv) {
 	int r;
 	char *buf;
 	int count;
-	size_t bufsize = BUFSIZE;
+	size_t bufsize;
 	int i;
 	Vdbe *v;
+	VdbeCursor vc;
 
 	// initalize
+	bufsize =  BUFSIZE;
+	sqlite3_config(SQLITE_CONFIG_SINGLETHREAD); // should have been disabled in compile
+	sqlite3_config(SQLITE_CONFIG_MEMSTATUS, 0); // we will not resize memory so we need not keep track of it 
+	//sqlite3_config(SQLITE_CONFIG_MALLOC, &wasm_mem_methods);
+
 	r = sqlite3_initialize();
-	p = sqlite3MallocZero(sizeof(Parse));
 	//s = sqlite3MallocZero(sizeof(sqlite3));
 	r = sqlite3_open("db", &s);
+	p = sqlite3MallocZero(sizeof(Parse));
 	assert(r == SQLITE_OK);
 	s->mutex = 0;
 	s->aLimit[SQLITE_LIMIT_VDBE_OP] = MAXOPS;
@@ -127,12 +138,20 @@ int main(int argc, char **argv) {
 	sqlite3VdbeMakeReady(v, p);
 	sqlite3VdbeRunOnlyOnce(v);
 	sqlite3VdbeUsesBtree(v, 0);
+	//v->nMem=1024;
+	v->aVar=0x0;
 	v->nCursor = 1;
-	(*(v->apCsr))->eCurType = CURTYPE_BTREE;
-	(*(v->apCsr))->iDb = 0;
-	(*(v->apCsr))->nField = 2; // get this from somewhere else
-	(*(v->apCsr))->uc.pCursor = (BtCursor*)malloc(sizeof(char)*TMPMEMCELLSIZE);
-
+	vc.eCurType = CURTYPE_BTREE;
+	vc.iDb = 0;
+	vc.nField = 2;
+	vc.uc.pCursor = (BtCursor*)malloc(sizeof(char)*TMPMEMCELLSIZE);
+	*(v->apCsr) = &vc;
+//(*(v->apCsr)) = 0x0;
+//	(*(v->apCsr))->eCurType = CURTYPE_BTREE;
+//	(*(v->apCsr))->iDb = 0;
+//	(*(v->apCsr))->nField = 2; // get this from somewhere else
+//	(*(v->apCsr))->uc.pCursor = (BtCursor*)malloc(sizeof(char)*TMPMEMCELLSIZE);
+//
 	// stealing from static sqlite3Step
 	s->u1.isInterrupted = (int)0;
 	s->nVdbeActive++;
