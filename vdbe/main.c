@@ -13,7 +13,10 @@ char opcodemap[1024][32];
 int opcodecount;
 
 #define BUFSIZE 1024
-#define MAXOPS 250000000;
+#define MAXOPS 250000000
+#define TMPMEMCELLSIZE 1024 * 1024
+
+VdbeCursor *allocateCursor(Vdbe*,int,int,int,u8);
 
 int main(int argc, char **argv) {
 	FILE *f;
@@ -28,12 +31,15 @@ int main(int argc, char **argv) {
 
 	// initalize
 	r = sqlite3_initialize();
+	p = sqlite3MallocZero(sizeof(Parse));
 	//s = sqlite3MallocZero(sizeof(sqlite3));
 	r = sqlite3_open("db", &s);
-	p = sqlite3MallocZero(sizeof(Parse));
+	assert(r == SQLITE_OK);
 	s->mutex = 0;
 	s->aLimit[SQLITE_LIMIT_VDBE_OP] = MAXOPS;
+	s->enc = SQLITE_UTF8;
 	p->db = s;
+	//v->db = s; 
 	buf = malloc(sizeof(char) * BUFSIZE);
 
 	// create the virtual machine
@@ -122,9 +128,13 @@ int main(int argc, char **argv) {
 	sqlite3VdbeRunOnlyOnce(v);
 	sqlite3VdbeUsesBtree(v, 0);
 	v->nCursor = 1;
+	(*(v->apCsr))->eCurType = CURTYPE_BTREE;
+	(*(v->apCsr))->iDb = 0;
+	(*(v->apCsr))->nField = 2; // get this from somewhere else
+	(*(v->apCsr))->uc.pCursor = (BtCursor*)malloc(sizeof(char)*TMPMEMCELLSIZE);
 
 	// stealing from static sqlite3Step
-	s->u1.isInterrupted = 0;
+	s->u1.isInterrupted = (int)0;
 	s->nVdbeActive++;
 	v->pc = 0;
 	s->nVdbeExec++;
