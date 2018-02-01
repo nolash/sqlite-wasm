@@ -14,7 +14,7 @@
 CURDIR=$(shell pwd)
 
 # sqlite root dir
-SQLITEDIR=/mnt/data/src/ext/sqlite-src-3210000
+SQLITEDIR=/mnt/data/src/misc/sqlite-src-3210000
 
 # sqlite build subdir
 SQLITEBUILDSUBDIR=build-3
@@ -23,7 +23,7 @@ SQLITEBUILDSUBDIR=build-3
 INCLUDE=-I${SQLITEDIR} -I${SRC} -I${SQLITEDIR}/src -I${SQLITEDIR}/${SQLITEBUILDSUBDIR} -I${SQLITEDIR}/${SQLITEBUILDSUBDIR}/tsrc 
 
 # swarm vfs repo root
-VFSDIR=/home/lash/data/src/go/src/github.com/nolash/swarm-sqlite-vfs
+VFSDIR=/home/lash/data/src/swarm-sqlite-vfs
 
 #EMCCDIR=/mnt/data/src/ext/emscripten
 #BINARYENDIR=/mnt/data/src/ext/binaryen/build/bin
@@ -99,10 +99,13 @@ emsdk:
 	EMMAKEN_CFLAGS="${INCLUDE}" emcc ${SQLITEDIR}/${SQLITEBUILDSUBDIR}/tsrc/mutex_noop.c -o mutex_noop.bc
 	EMMAKEN_CFLAGS="${INCLUDE}" emcc ${SQLITEDIR}/${SQLITEBUILDSUBDIR}/tsrc/mutex.c -o mutex.bc
 
+main: 
 	EMMAKEN_CFLAGS="-I${VFSDIR}/demo/hello ${INCLUDE}" emcc ${VFSDIR}/demo/main_hello.c -o main.bc -DTEST_HELLO=1
+
+links: emsdk main
 	EMMAKEN_CFLAGS="-I${VFSDIR}/demo/hello ${INCLUDE}" emcc -o hello.bc ${VFSDIR}/demo/hello/hello.c -DTEST_HELLO=1
 	emcc hello.bc main.bc rowset.bc btree.bc vdbe.bc btmutex.bc vdbeaux.bc vdbemem.bc malloc.bc global.bc status.bc trigger.bc expr.bc callback.bc hash.bc fault.bc util.bc build.bc select.bc where.bc wherecode.bc insert.bc walker.bc prepare.bc delete.bc resolve.bc auth.bc fkey.bc vtab.bc main_sq.bc ctime.bc pragma.bc tokenize.bc parse.bc printf.bc update.bc vacuum.bc attach.bc vdbetrace.bc analyze.bc pager.bc wal.bc os_unix.bc os.bc pcache.bc memjournal.bc pcache1.bc backup.bc bitvec.bc vdbeapi.bc alter.bc legacy.bc random.bc vdbesort.bc func.bc utf.bc threads.bc date.bc vdbeblob.bc table.bc complete.bc whereexpr.bc treeview.bc loadext.bc opcodes.bc mem1.bc mutex_unix.bc mutex.bc mutex_noop.bc -s WASM=1 
 
 
 clean:
-	rm -f *.o *.js *.s *.bc *.map *.html *.wasm *.wast *.a
+	rm -f *.o *.js *.s *.bc *.map *.html *.wasm *.wast.* *.a
