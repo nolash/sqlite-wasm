@@ -28,7 +28,8 @@ int main(int argc, char **argv) {
 
 	// initalize
 	r = sqlite3_initialize();
-	s = sqlite3MallocZero(sizeof(sqlite3));
+	//s = sqlite3MallocZero(sizeof(sqlite3));
+	r = sqlite3_open("db", &s);
 	p = sqlite3MallocZero(sizeof(Parse));
 	s->mutex = 0;
 	s->aLimit[SQLITE_LIMIT_VDBE_OP] = MAXOPS;
@@ -37,8 +38,7 @@ int main(int argc, char **argv) {
 
 	// create the virtual machine
 	v = sqlite3VdbeCreate(p);
-	sqlite3VdbeRunOnlyOnce(v);
-
+	
 	// open the opcode textfile
 	f = fopen(*(argv+1), "r");
 	if (!f) {
@@ -66,15 +66,18 @@ int main(int argc, char **argv) {
 
 			pn = strtok(NULL, ",");
 			if (!pn) {
+				int ii;
+
+				ii = i;
 				if (i == 4) {
-					op[i] = 0;
-					i++;
+					ii++;
+					op[ii] = 0;
 				}
 				pn = strtok(NULL, "\n");
 				*(p+strlen(p)-1)=0;
 				l = strtol(p, NULL, 10);
 				assert(l != LONG_MAX && l != LONG_MIN);
-				op[i] = l;
+				op[ii] = l;
 				break;
 			}
 			n = (int)(pn-p);
@@ -99,7 +102,11 @@ int main(int argc, char **argv) {
 		if (op[0] < 0) {
 			continue;
 		}
-		r = sqlite3VdbeAddOp3(v, op[0], op[1], op[2], op[3]) > 0;
+		if (i == 4) {
+			r = sqlite3VdbeAddOp3(v, op[0], op[1], op[2], op[3]);
+		} else {
+			r = sqlite3VdbeAddOp4(v, op[0], op[1], op[2], op[3], (const char*)op[4], P4_INT32);
+		}
 		assert(r > 0);
 		count++;
 	}	
@@ -108,10 +115,13 @@ int main(int argc, char **argv) {
 	for (i = 0; i < count; i++) {
 		VdbeOp *op;
 		op = sqlite3VdbeGetOp(v, i);
-		fprintf(stderr, "%d: [%d] %d, %d, %d\n", i, op->opcode, op->p1, op->p2, op->p3);
+		fprintf(stderr, "%d: [%d] %d, %d, %d, %i\n", i, op->opcode, op->p1, op->p2, op->p3, op->p4);
 	}
 
 	sqlite3VdbeMakeReady(v, p);
+	sqlite3VdbeRunOnlyOnce(v);
+	sqlite3VdbeUsesBtree(v, 0);
+	v->nCursor = 1;
 
 	// stealing from static sqlite3Step
 	s->u1.isInterrupted = 0;
