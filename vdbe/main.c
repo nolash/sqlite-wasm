@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <signal.h>
 
 #include <sqliteInt.h>
 #include <vdbe.h>
@@ -26,7 +27,7 @@ VdbeCursor *allocateCursor(Vdbe*,int,int,int,u8);
 int main(int argc, char **argv) {
 	FILE *f;
 	Parse *p;
-	sqlite3 *s;
+	sqlite3 s;
 	int r;
 	char *buf;
 	int count;
@@ -42,14 +43,14 @@ int main(int argc, char **argv) {
 	//sqlite3_config(SQLITE_CONFIG_MALLOC, &wasm_mem_methods);
 
 	r = sqlite3_initialize();
-	//s = sqlite3MallocZero(sizeof(sqlite3));
-	r = sqlite3_open("db", &s);
-	p = sqlite3MallocZero(sizeof(Parse));
 	assert(r == SQLITE_OK);
-	s->mutex = 0;
-	s->aLimit[SQLITE_LIMIT_VDBE_OP] = MAXOPS;
-	s->enc = SQLITE_UTF8;
-	p->db = s;
+	memset(&s, 0, sizeof(sqlite3));
+	p = sqlite3MallocZero(sizeof(Parse));
+
+	// initial growOp when calling ..AddOp fails if we don't manually set bounds
+	s.aLimit[SQLITE_LIMIT_VDBE_OP] = MAXOPS; 
+	s.enc = SQLITE_UTF8;
+	p->db = &s;
 	//v->db = s; 
 	buf = malloc(sizeof(char) * BUFSIZE);
 
@@ -125,9 +126,11 @@ int main(int argc, char **argv) {
 			r = sqlite3VdbeAddOp4(v, op[0], op[1], op[2], op[3], (const char*)op[4], P4_INT32);
 		}
 		assert(r > 0);
+		fprintf(stderr, "inserted op #%d\n", r);
 		count++;
 	}	
 	fclose(f);
+	v->nOp = count;
 
 	for (i = 0; i < count; i++) {
 		VdbeOp *op;
@@ -135,30 +138,37 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "%d: [%d] %d, %d, %d, %i\n", i, op->opcode, op->p1, op->p2, op->p3, op->p4);
 	}
 
-	sqlite3VdbeMakeReady(v, p);
-	sqlite3VdbeRunOnlyOnce(v);
-	sqlite3VdbeUsesBtree(v, 0);
-	//v->nMem=1024;
 	v->aVar=0x0;
 	v->nCursor = 1;
+	memset(&vc, 0, sizeof(VdbeCursor));
 	vc.eCurType = CURTYPE_BTREE;
 	vc.iDb = 0;
 	vc.nField = 2;
 	vc.uc.pCursor = (BtCursor*)malloc(sizeof(char)*TMPMEMCELLSIZE);
+	memset(vc.uc.pCursor, 0, TMPMEMCELLSIZE);
+
+	sqlite3VdbeMakeReady(v, p);
 	*(v->apCsr) = &vc;
-//(*(v->apCsr)) = 0x0;
-//	(*(v->apCsr))->eCurType = CURTYPE_BTREE;
-//	(*(v->apCsr))->iDb = 0;
-//	(*(v->apCsr))->nField = 2; // get this from somewhere else
-//	(*(v->apCsr))->uc.pCursor = (BtCursor*)malloc(sizeof(char)*TMPMEMCELLSIZE);
-//
+	r = sqlite3_open("db", &v->db);
+	if (r != SQLITE_OK) {
+		raise(SIGABRT);
+	}
+	sqlite3VdbeRunOnlyOnce(v);
+	sqlite3VdbeUsesBtree(v, 0);
+	//v->nMem=1024;
+	
+	// db seems to be partly uninitialized.
+	v->db->u1.isInterrupted = (int)0;
+
 	// stealing from static sqlite3Step
-	s->u1.isInterrupted = (int)0;
-	s->nVdbeActive++;
+	v->db->nVdbeActive++;
 	v->pc = 0;
-	s->nVdbeExec++;
+	v->db->nVdbeExec++;
 	r = sqlite3VdbeExec(v);
-	s->nVdbeExec--;
+	if (r!=SQLITE_OK || v->rc==SQLITE_OK) {
+		raise(SIGABRT);
+	}
+	v->db->nVdbeExec--;
 	
 	return 0;
 }

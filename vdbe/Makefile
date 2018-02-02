@@ -1,5 +1,5 @@
 SQLITEROOT=/mnt/data/src/misc/sqlite-src-3210000
-SQLITEBUILD=$(SQLITEROOT)/build_local
+SQLITEBUILD=$(SQLITEROOT)/build_local_nosharedcache
 SQLITESRC=$(SQLITEBUILD)/tsrc
 INCLUDE=-I$(SQLITESRC) -I.
 LIB=-Wl,-rpath -Wl,$(SQLITEBUILD)/lib
