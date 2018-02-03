@@ -28,6 +28,7 @@ int main(int argc, char **argv) {
 	FILE *f;
 	Parse *p;
 	sqlite3 s;
+	sqlite3 *s2;
 	int r;
 	char *buf;
 	int count;
@@ -51,17 +52,18 @@ int main(int argc, char **argv) {
 	s.aLimit[SQLITE_LIMIT_VDBE_OP] = MAXOPS; 
 	s.enc = SQLITE_UTF8;
 	p->db = &s;
-	//v->db = s; 
-	buf = malloc(sizeof(char) * BUFSIZE);
 
 	// create the virtual machine
 	v = sqlite3VdbeCreate(p);
-	
+	//v->db = &s; 
+
 	// open the opcode textfile
 	f = fopen(*(argv+1), "r");
 	if (!f) {
 		exit(1);
 	}
+
+	buf = malloc(sizeof(char) * BUFSIZE);
 	r = -1;
 	count = 1; // sqlite3VdbeCreate already set init
 	while (r) {
@@ -138,28 +140,24 @@ int main(int argc, char **argv) {
 		fprintf(stderr, "%d: [%d] %d, %d, %d, %i\n", i, op->opcode, op->p1, op->p2, op->p3, op->p4);
 	}
 
-	v->aVar=0x0;
-	v->nCursor = 1;
-	memset(&vc, 0, sizeof(VdbeCursor));
-	vc.eCurType = CURTYPE_BTREE;
-	vc.iDb = 0;
-	vc.nField = 2;
-	vc.uc.pCursor = (BtCursor*)malloc(sizeof(char)*TMPMEMCELLSIZE);
-	memset(vc.uc.pCursor, 0, TMPMEMCELLSIZE);
-
 	sqlite3VdbeMakeReady(v, p);
-	*(v->apCsr) = &vc;
-	r = sqlite3_open("db", &v->db);
+	r = sqlite3VdbeReset(v);
 	if (r != SQLITE_OK) {
 		raise(SIGABRT);
 	}
+	*(v->apCsr) = 0;
+	//r = sqlite3_open("db", &v->db);
+	r = sqlite3_open_v2("db", &s2, SQLITE_OPEN_READONLY, 0x0);
+	if (r != SQLITE_OK) {
+		raise(SIGABRT);
+	}
+	r = sqlite3Init(s2, &buf);
+	if (r != SQLITE_OK) {
+		raise(SIGABRT);
+	}
+	v->db = s2;
 	sqlite3VdbeRunOnlyOnce(v);
-	sqlite3VdbeUsesBtree(v, 0);
-	//v->nMem=1024;
 	
-	// db seems to be partly uninitialized.
-	v->db->u1.isInterrupted = (int)0;
-
 	// stealing from static sqlite3Step
 	v->db->nVdbeActive++;
 	v->pc = 0;
