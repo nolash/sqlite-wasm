@@ -163,11 +163,16 @@ int main(int argc, char **argv) {
 	v->db->nVdbeActive++;
 	v->pc = 0;
 	v->db->nVdbeExec++;
+	i = 0;
 	while (r != SQLITE_DONE) {
 		r = sqlite3VdbeExec(v->db->pVdbe);
 		if (r != SQLITE_ROW && r != SQLITE_DONE) {
 			raise(SIGABRT);
 		}
+		if (v->pResultSet != 0) {
+			fprintf(stdout, "Row #%d: k: %d, v: %s\n", i, v->pResultSet->u.i, (v->pResultSet+1)->z);
+		}
+		i++;
 	}
 	v->db->nVdbeExec--;
 	
