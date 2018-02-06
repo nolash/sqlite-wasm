@@ -28,7 +28,7 @@ int main(int argc, char **argv) {
 	FILE *f;
 	Parse *p;
 	sqlite3 s;
-	sqlite3 *s2;
+	sqlite3 s2;
 	int r;
 	char *buf;
 	int count;
@@ -52,10 +52,11 @@ int main(int argc, char **argv) {
 	s.aLimit[SQLITE_LIMIT_VDBE_OP] = MAXOPS; 
 	s.enc = SQLITE_UTF8;
 	p->db = &s;
+	p->nMem = 3;
+	p->nVar = 3;
 
 	// create the virtual machine
 	v = sqlite3VdbeCreate(p);
-	//v->db = &s; 
 
 	// open the opcode textfile
 	f = fopen(*(argv+1), "r");
@@ -77,7 +78,7 @@ int main(int argc, char **argv) {
 		}
 		p = strtok(buf, ",");
 		i = 0;
-		fprintf(stderr, "%s\n", buf);
+		//fprintf(stderr, "%s\n", buf);
 		while (p) {
 			char *pn;
 			char c[128];
@@ -128,7 +129,7 @@ int main(int argc, char **argv) {
 			r = sqlite3VdbeAddOp4(v, op[0], op[1], op[2], op[3], (const char*)op[4], P4_INT32);
 		}
 		assert(r > 0);
-		fprintf(stderr, "inserted op #%d\n", r);
+		//fprintf(stderr, "inserted op #%d\n", r);
 		count++;
 	}	
 	fclose(f);
@@ -137,34 +138,36 @@ int main(int argc, char **argv) {
 	for (i = 0; i < count; i++) {
 		VdbeOp *op;
 		op = sqlite3VdbeGetOp(v, i);
-		fprintf(stderr, "%d: [%d] %d, %d, %d, %i\n", i, op->opcode, op->p1, op->p2, op->p3, op->p4);
+		//fprintf(stderr, "%d: [%d] %d, %d, %d, %i\n", i, op->opcode, op->p1, op->p2, op->p3, op->p4);
 	}
 
 	sqlite3VdbeMakeReady(v, p);
-	r = sqlite3VdbeReset(v);
-	if (r != SQLITE_OK) {
-		raise(SIGABRT);
-	}
 	*(v->apCsr) = 0;
-	//r = sqlite3_open("db", &v->db);
-	r = sqlite3_open_v2("db", &s2, SQLITE_OPEN_READONLY, 0x0);
+	r = sqlite3_open_v2("db", &v->db, SQLITE_OPEN_READONLY, 0x0);
 	if (r != SQLITE_OK) {
 		raise(SIGABRT);
 	}
-	r = sqlite3Init(s2, &buf);
+	if (!sqlite3SafetyCheckOk(v->db)) { // returns 1 if ok
+		raise(SIGABRT);
+	}
+
+	v->db->pVdbe = v;
+	r = sqlite3Init(v->db, &buf);
 	if (r != SQLITE_OK) {
 		raise(SIGABRT);
 	}
-	v->db = s2;
-	sqlite3VdbeRunOnlyOnce(v);
+	
+	//sqlite3VdbeRunOnlyOnce(v);
 	
 	// stealing from static sqlite3Step
 	v->db->nVdbeActive++;
 	v->pc = 0;
 	v->db->nVdbeExec++;
-	r = sqlite3VdbeExec(v);
-	if (r!=SQLITE_OK || v->rc==SQLITE_OK) {
-		raise(SIGABRT);
+	while (r != SQLITE_DONE) {
+		r = sqlite3VdbeExec(v->db->pVdbe);
+		if (r != SQLITE_ROW && r != SQLITE_DONE) {
+			raise(SIGABRT);
+		}
 	}
 	v->db->nVdbeExec--;
 	
