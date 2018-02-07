@@ -32,6 +32,8 @@ int main(int argc, char **argv) {
 	size_t bufsize;
 	int i;
 	Vdbe *v;
+	Btree *btree;
+	sqlite3_vfs *vfs;
 
 	// initalize
 	bufsize =  BUFSIZE;
@@ -148,10 +150,17 @@ int main(int argc, char **argv) {
 	sqlite3VdbeMakeReady(v, p);
 
 	// TODO: Optimize.
-	r = sqlite3_open_v2("db", &v->db, SQLITE_OPEN_READONLY, 0x0);
+	//r = sqlite3_open_v2("db", &v->db, SQLITE_OPEN_READONLY, 0x0);
+	btree = s.aDbStatic->pBt;
+	s.aDb = sqlite3MallocZero(sizeof(Db*));
+	s.aDb = s.aDbStatic;
+	s.aDb->pSchema = sqlite3MallocZero(sizeof(Schema));
+	vfs = sqlite3_vfs_find(0x0);
+	r = sqlite3BtreeOpen(vfs, "db", &s, &btree, 0, SQLITE_OPEN_READONLY | SQLITE_OPEN_MAIN_DB);
 	if (r != SQLITE_OK) {
 		raise(SIGABRT);
 	}
+	s.aDb->pBt = btree;
 
 	// TODO: Optimize. (sqlite3InitOne is local by default make and can't be called directly)
 	// Load schema for database and create internal representation
