@@ -22,28 +22,23 @@ void *wasm_debugmem;
 #define MAXOPS 250000000
 #define TMPMEMCELLSIZE 1024 * 1024
 
-VdbeCursor *allocateCursor(Vdbe*,int,int,int,u8);
-
 int main(int argc, char **argv) {
 	FILE *f;
 	Parse *p;
 	sqlite3 s;
-	sqlite3 s2;
 	int r;
 	char *buf;
 	int count;
 	size_t bufsize;
 	int i;
 	Vdbe *v;
-	VdbeCursor vc;
 
 	// initalize
 	bufsize =  BUFSIZE;
-	sqlite3_config(SQLITE_CONFIG_SINGLETHREAD); // should have been disabled in compile
 	sqlite3_config(SQLITE_CONFIG_MEMSTATUS, 0); // we will not resize memory so we need not keep track of it 
 	//sqlite3_config(SQLITE_CONFIG_MALLOC, &wasm_mem_methods);
 
-	r = sqlite3_initialize();
+	r = sqlite3MallocInit();
 	assert(r == SQLITE_OK);
 	memset(&s, 0, sizeof(sqlite3));
 	p = sqlite3MallocZero(sizeof(Parse));
@@ -51,11 +46,14 @@ int main(int argc, char **argv) {
 	// initial growOp when calling ..AddOp fails if we don't manually set bounds
 	s.aLimit[SQLITE_LIMIT_VDBE_OP] = MAXOPS; 
 	s.enc = SQLITE_UTF8;
-	p->db = &s;
-	p->nMem = 3;
-	p->nVar = 3;
 
-	// create the virtual machine
+	// create the virtual machine:
+	// * allocate memory for the Vdbe
+	// * set vdbe db to parse db
+	// * link vdbe parse to parse
+	// * link parse vdbe to vdbe
+	// * add init instruction (which is why we skip it in the import)
+	p->db = &s;
 	v = sqlite3VdbeCreate(p);
 
 	// open the opcode textfile
@@ -64,6 +62,7 @@ int main(int argc, char **argv) {
 		exit(1);
 	}
 
+	// inject opcodes
 	buf = malloc(sizeof(char) * BUFSIZE);
 	r = -1;
 	count = 1; // sqlite3VdbeCreate already set init
@@ -135,33 +134,39 @@ int main(int argc, char **argv) {
 	fclose(f);
 	v->nOp = count;
 
+	// TODO: actual value comparison
 	for (i = 0; i < count; i++) {
 		VdbeOp *op;
 		op = sqlite3VdbeGetOp(v, i);
 		//fprintf(stderr, "%d: [%d] %d, %d, %d, %i\n", i, op->opcode, op->p1, op->p2, op->p3, op->p4);
 	}
 
+	// Prepare vdbe for first run
+	// * allocate memory for cursors, argumentsa
+	// * rewinds vdbe to the start of the instruction list
+	p->nMem = 1; // specify how many memory cells we need, one per cursor
 	sqlite3VdbeMakeReady(v, p);
-	*(v->apCsr) = 0;
+
+	// TODO: Optimize.
 	r = sqlite3_open_v2("db", &v->db, SQLITE_OPEN_READONLY, 0x0);
 	if (r != SQLITE_OK) {
 		raise(SIGABRT);
 	}
-	if (!sqlite3SafetyCheckOk(v->db)) { // returns 1 if ok
-		raise(SIGABRT);
-	}
 
+	// TODO: Optimize. (sqlite3InitOne is local by default make and can't be called directly)
+	// Load schema for database and create internal representation
 	v->db->pVdbe = v;
 	r = sqlite3Init(v->db, &buf);
 	if (r != SQLITE_OK) {
 		raise(SIGABRT);
 	}
+
+	// Strictly correct but doesn't affect the simplest example
+	// sqlite3VdbeRunOnlyOnce(v);
 	
-	//sqlite3VdbeRunOnlyOnce(v);
-	
-	// stealing from static sqlite3Step
-	v->db->nVdbeActive++;
+	// manually implement necessary calls from static method sqlite3Step
 	v->pc = 0;
+	v->db->nVdbeActive++;
 	v->db->nVdbeExec++;
 	i = 0;
 	while (r != SQLITE_DONE) {
@@ -175,6 +180,7 @@ int main(int argc, char **argv) {
 		i++;
 	}
 	v->db->nVdbeExec--;
+	v->db->nVdbeActive--;
 	
 	return 0;
 }
