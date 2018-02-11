@@ -13,10 +13,17 @@
 
 char wasm_mem[SQLITE_WASM_PAGESIZE * SQLITE_WASM_PAGECOUNT]; 
 int wasm_memsize;
+int wasm_memcrsr;
 void *wasm_debugmem;
 
 void *wasm_malloc(int c) {
-	return &wasm_mem;
+	void *ptr;
+	if (c + wasm_memcrsr > wasm_memsize) {
+		return 0;
+	}
+	ptr = &wasm_mem[wasm_memcrsr];
+	wasm_memcrsr += c;
+	return ptr;
 }
 
 void wasm_free(void *v) {
@@ -41,6 +48,7 @@ int wasm_roundup(int c) {
 int wasm_init(void *m) {
 	wasm_memsize = SQLITE_WASM_PAGESIZE * SQLITE_WASM_PAGECOUNT;
 	wasm_debugmem = &wasm_mem;
+	wasm_memcrsr = 0;
 	return 0;
 }
 

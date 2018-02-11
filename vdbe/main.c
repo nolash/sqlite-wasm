@@ -20,6 +20,7 @@ void *wasm_debugmem;
 
 #define BUFSIZE 1024
 #define MAXOPS 250000000
+#define MAXSQL 1024
 #define TMPMEMCELLSIZE 1024 * 1024
 
 int main(int argc, char **argv) {
@@ -32,13 +33,18 @@ int main(int argc, char **argv) {
 	size_t bufsize;
 	int i;
 	Vdbe *v;
+	VdbeCursor vc;
 	Btree *btree;
 	sqlite3_vfs *vfs;
+	unsigned int dbmeta[9];
+	unsigned char dbmetaitem;
+	int rootpage;
 
 	// initalize
 	bufsize =  BUFSIZE;
+	rootpage = -1;
 	sqlite3_config(SQLITE_CONFIG_MEMSTATUS, 0); // we will not resize memory so we need not keep track of it 
-	//sqlite3_config(SQLITE_CONFIG_MALLOC, &wasm_mem_methods);
+	sqlite3_config(SQLITE_CONFIG_MALLOC, &wasm_mem_methods);
 
 	r = sqlite3MallocInit();
 	assert(r == SQLITE_OK);
@@ -47,7 +53,8 @@ int main(int argc, char **argv) {
 
 	// initial growOp when calling ..AddOp fails if we don't manually set bounds
 	s.aLimit[SQLITE_LIMIT_VDBE_OP] = MAXOPS; 
-	s.enc = SQLITE_UTF8;
+	s.aLimit[SQLITE_LIMIT_SQL_LENGTH] = MAXSQL; 
+	//s.enc = SQLITE_UTF8;
 
 	// create the virtual machine:
 	// * allocate memory for the Vdbe
@@ -129,11 +136,19 @@ int main(int argc, char **argv) {
 		} else {
 			r = sqlite3VdbeAddOp4(v, op[0], op[1], op[2], op[3], (const char*)op[4], P4_INT32);
 		}
+		if (op[0] == 104) { // OpenRead
+			rootpage = op[2];
+		}	
 		assert(r > 0);
 		//fprintf(stderr, "inserted op #%d\n", r);
 		count++;
 	}	
 	fclose(f);
+
+	if (rootpage < 0) {
+		raise(SIGABRT);
+	}
+
 	v->nOp = count;
 
 	// TODO: actual value comparison
@@ -146,7 +161,7 @@ int main(int argc, char **argv) {
 	// Prepare vdbe for first run
 	// * allocate memory for cursors, argumentsa
 	// * rewinds vdbe to the start of the instruction list
-	p->nMem = 1; // specify how many memory cells we need, one per cursor
+	p->nMem = 3; // specify how many memory cells we need, one per cursor
 	sqlite3VdbeMakeReady(v, p);
 
 	// TODO: Optimize.
@@ -154,21 +169,63 @@ int main(int argc, char **argv) {
 	btree = s.aDbStatic->pBt;
 	s.aDb = sqlite3MallocZero(sizeof(Db*));
 	s.aDb = s.aDbStatic;
-	s.aDb->pSchema = sqlite3MallocZero(sizeof(Schema));
 	vfs = sqlite3_vfs_find(0x0);
 	r = sqlite3BtreeOpen(vfs, "db", &s, &btree, 0, SQLITE_OPEN_READONLY | SQLITE_OPEN_MAIN_DB);
 	if (r != SQLITE_OK) {
 		raise(SIGABRT);
 	}
-	s.aDb->pBt = btree;
+	s.aDb[0].zDbSName = "main";
+	s.aDb[0].pSchema = sqlite3MallocZero(sizeof(Schema));
+	s.aDb[0].pBt = btree;
+	s.aDb[0].safety_level = SQLITE_DEFAULT_SYNCHRONOUS + 1;
+	s.aDb[1].zDbSName = "temp";
+	s.aDb[1].pSchema = sqlite3SchemaGet(&s, 0);
+	s.aDb[1].safety_level = PAGER_SYNCHRONOUS_OFF;
+	s.magic = SQLITE_MAGIC_OPEN;
 
-	// TODO: Optimize. (sqlite3InitOne is local by default make and can't be called directly)
-	// Load schema for database and create internal representation
-	v->db->pVdbe = v;
-	r = sqlite3Init(v->db, &buf);
-	if (r != SQLITE_OK) {
-		raise(SIGABRT);
+	sqlite3BtreeEnter(s.aDb[0].pBt);
+	if (!sqlite3BtreeIsInReadTrans(s.aDb[0].pBt)) {
+		sqlite3BtreeBeginTrans(s.aDb[0].pBt, 0);
 	}
+	for (i = 0; i < 9; i++) {
+		sqlite3BtreeGetMeta(s.aDb[0].pBt, i+1, (unsigned int*)&dbmeta[i]);
+	}
+
+	// schema
+	s.aDb[0].pSchema->schema_cookie = dbmeta[BTREE_SCHEMA_VERSION-1];
+
+	// encoding
+	dbmetaitem = (u8)dbmeta[BTREE_TEXT_ENCODING-1] & 3;
+	if (dbmetaitem == 0) {
+		dbmetaitem = SQLITE_UTF8;	
+	}
+	s.enc = dbmetaitem;
+
+	// fileformat
+	dbmetaitem = (u8)dbmeta[BTREE_FILE_FORMAT-1];
+	if (dbmetaitem == 0) {
+		dbmetaitem = 1;
+	}
+	s.aDb[0].pSchema->file_format = dbmetaitem;
+
+	// set up the schema
+	DbClearProperty(&s, 0, DB_Empty);
+	s.init.iDb = 0;
+	s.init.newTnum = 2;
+	s.init.orphanTrigger = 0;
+	sqlite3ResetAllSchemasOfConnection(&s);
+
+
+	// create cursor
+//	vc.uc.pCursor = sqlite3MallocZero(sqlite3BtreeCursorSize());
+//	v->apCsr[0] = &vc;
+	v->nCursor = 2;
+	v->db->pVdbe = v;
+
+//	r = sqlite3Init(v->db, &buf);
+//	if (r != SQLITE_OK) {
+//		raise(SIGABRT);
+//	}
 
 	// Strictly correct but doesn't affect the simplest example
 	// sqlite3VdbeRunOnlyOnce(v);
@@ -190,6 +247,6 @@ int main(int argc, char **argv) {
 	}
 	v->db->nVdbeExec--;
 	v->db->nVdbeActive--;
-	
+	free(vc.uc.pCursor);
 	return 0;
 }
