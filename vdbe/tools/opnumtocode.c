@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
 			char *p;
 			p = strchr(buf, 0x2c);
 			*p = 0;
-			printf("%s:%s\n", opcodemap[atoi(buf)], p+1);
+			printf("%s,%s\n", opcodemap[atoi(buf)], p+1);
 			memset(buf, 0, c);
 			c = 0;
 		} else {

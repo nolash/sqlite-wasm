@@ -19,8 +19,9 @@ sqlite3_mem_methods wasm_mem_methods;
 void *wasm_debugmem;
 
 #define BUFSIZE 1024
-#define MAXOPS 250000000
+#define MAXOPS 64
 #define MAXSQL 1024
+#define MAXLEN 4096
 #define TMPMEMCELLSIZE 1024 * 1024
 
 int main(int argc, char **argv) {
@@ -54,7 +55,7 @@ int main(int argc, char **argv) {
 	// initial growOp when calling ..AddOp fails if we don't manually set bounds
 	s.aLimit[SQLITE_LIMIT_VDBE_OP] = MAXOPS; 
 	s.aLimit[SQLITE_LIMIT_SQL_LENGTH] = MAXSQL; 
-	//s.enc = SQLITE_UTF8;
+	s.aLimit[SQLITE_LIMIT_LENGTH] = MAXLEN; 
 
 	// create the virtual machine:
 	// * allocate memory for the Vdbe
@@ -161,7 +162,7 @@ int main(int argc, char **argv) {
 	// Prepare vdbe for first run
 	// * allocate memory for cursors, argumentsa
 	// * rewinds vdbe to the start of the instruction list
-	p->nMem = 3; // specify how many memory cells we need, one per cursor
+	p->nMem = 1; // specify how many memory cells we need, one per cursor
 	sqlite3VdbeMakeReady(v, p);
 
 	// TODO: Optimize.
@@ -219,7 +220,9 @@ int main(int argc, char **argv) {
 	// create cursor
 //	vc.uc.pCursor = sqlite3MallocZero(sqlite3BtreeCursorSize());
 //	v->apCsr[0] = &vc;
-	v->nCursor = 2;
+//	v->nCursor = 1;
+	v->aMem[0].xDel = wasm_mem_methods.xFree;
+	v->aMem[0].db = &s;
 	v->db->pVdbe = v;
 
 //	r = sqlite3Init(v->db, &buf);
@@ -247,6 +250,6 @@ int main(int argc, char **argv) {
 	}
 	v->db->nVdbeExec--;
 	v->db->nVdbeActive--;
-	free(vc.uc.pCursor);
+//	free(vc.uc.pCursor);
 	return 0;
 }
