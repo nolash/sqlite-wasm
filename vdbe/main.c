@@ -14,6 +14,7 @@ char opcodemap[1024][32];
 int opcodecount;
 
 #include "memhack.h"
+#include "vfshack.h"
 
 sqlite3_mem_methods wasm_mem_methods;
 void *wasm_debugmem;
@@ -46,14 +47,23 @@ int main(int argc, char **argv) {
 	rootpage = -1;
 	sqlite3_config(SQLITE_CONFIG_MEMSTATUS, 0); // we will not resize memory so we need not keep track of it 
 	sqlite3_config(SQLITE_CONFIG_MALLOC, &wasm_mem_methods);
+	r = sqlite3_enable_shared_cache(0);
+	if (r != SQLITE_OK) {
+		raise(SIGABRT);
+	}
 
 	r = sqlite3MallocInit();
+	if (r != 0) {
+		raise(SIGABRT);
+	}
 	assert(r == SQLITE_OK);
 	memset(&s, 0, sizeof(sqlite3));
 	p = sqlite3MallocZero(sizeof(Parse));
 
 	// initial growOp when calling ..AddOp fails if we don't manually set bounds
 	s.aLimit[SQLITE_LIMIT_VDBE_OP] = MAXOPS; 
+
+	// set bounds for sql statement lengths
 	s.aLimit[SQLITE_LIMIT_SQL_LENGTH] = MAXSQL; 
 	s.aLimit[SQLITE_LIMIT_LENGTH] = MAXLEN; 
 
@@ -153,11 +163,11 @@ int main(int argc, char **argv) {
 	v->nOp = count;
 
 	// TODO: actual value comparison
-	for (i = 0; i < count; i++) {
-		VdbeOp *op;
-		op = sqlite3VdbeGetOp(v, i);
-		//fprintf(stderr, "%d: [%d] %d, %d, %d, %i\n", i, op->opcode, op->p1, op->p2, op->p3, op->p4);
-	}
+//	for (i = 0; i < count; i++) {
+//		VdbeOp *op;
+//		op = sqlite3VdbeGetOp(v, i);
+//		fprintf(stderr, "%d: [%d] %d, %d, %d, %i\n", i, op->opcode, op->p1, op->p2, op->p3, op->p4);
+//	}
 
 	// Prepare vdbe for first run
 	// * allocate memory for cursors, argumentsa
@@ -165,16 +175,28 @@ int main(int argc, char **argv) {
 	p->nMem = 1; // specify how many memory cells we need, one per cursor
 	sqlite3VdbeMakeReady(v, p);
 
-	// TODO: Optimize.
-	//r = sqlite3_open_v2("db", &v->db, SQLITE_OPEN_READONLY, 0x0);
+	// sqlite3->aDbStatic holds the main db pointer. get the db btree from it
 	btree = s.aDbStatic->pBt;
+
+	// one for main, one for temp
 	s.aDb = sqlite3MallocZero(sizeof(Db*));
 	s.aDb = s.aDbStatic;
-	vfs = sqlite3_vfs_find(0x0);
+
+	// vfs hack is shortcircuit to in-memory data store
+	vfs = sqlite3MallocZero(sizeof(sqlite3_vfs));
+	wasmvfs_load("/mnt/data/src/jaak/sqlite-truebit/vdbe/db", &vfs);
+
+	// this throws an internal switch we haven't found yet, crashes without
+	sqlite3_vfs_register(vfs, 0);
+
+	// opens the database
 	r = sqlite3BtreeOpen(vfs, "db", &s, &btree, 0, SQLITE_OPEN_READONLY | SQLITE_OPEN_MAIN_DB);
 	if (r != SQLITE_OK) {
 		raise(SIGABRT);
 	}
+	s.magic = SQLITE_MAGIC_OPEN;
+
+	// hack the database pointers
 	s.aDb[0].zDbSName = "main";
 	s.aDb[0].pSchema = sqlite3MallocZero(sizeof(Schema));
 	s.aDb[0].pBt = btree;
@@ -182,8 +204,9 @@ int main(int argc, char **argv) {
 	s.aDb[1].zDbSName = "temp";
 	s.aDb[1].pSchema = sqlite3SchemaGet(&s, 0);
 	s.aDb[1].safety_level = PAGER_SYNCHRONOUS_OFF;
-	s.magic = SQLITE_MAGIC_OPEN;
 
+	// retrieve and set metadata from main database
+	// see prepare.c:sqlite3InitOne
 	sqlite3BtreeEnter(s.aDb[0].pBt);
 	if (!sqlite3BtreeIsInReadTrans(s.aDb[0].pBt)) {
 		sqlite3BtreeBeginTrans(s.aDb[0].pBt, 0);
@@ -192,47 +215,34 @@ int main(int argc, char **argv) {
 		sqlite3BtreeGetMeta(s.aDb[0].pBt, i+1, (unsigned int*)&dbmeta[i]);
 	}
 
-	// schema
+	// .. set schema
 	s.aDb[0].pSchema->schema_cookie = dbmeta[BTREE_SCHEMA_VERSION-1];
 
-	// encoding
+	// .. set encoding
 	dbmetaitem = (u8)dbmeta[BTREE_TEXT_ENCODING-1] & 3;
 	if (dbmetaitem == 0) {
 		dbmetaitem = SQLITE_UTF8;	
 	}
 	s.enc = dbmetaitem;
 
-	// fileformat
+	// .. set fileformat
 	dbmetaitem = (u8)dbmeta[BTREE_FILE_FORMAT-1];
 	if (dbmetaitem == 0) {
 		dbmetaitem = 1;
 	}
 	s.aDb[0].pSchema->file_format = dbmetaitem;
 
-	// set up the schema
+	// reset the schema
 	DbClearProperty(&s, 0, DB_Empty);
 	s.init.iDb = 0;
-	s.init.newTnum = 2;
-	s.init.orphanTrigger = 0;
 	sqlite3ResetAllSchemasOfConnection(&s);
 
 
 	// create cursor
-//	vc.uc.pCursor = sqlite3MallocZero(sqlite3BtreeCursorSize());
-//	v->apCsr[0] = &vc;
-//	v->nCursor = 1;
 	v->aMem[0].xDel = wasm_mem_methods.xFree;
 	v->aMem[0].db = &s;
 	v->db->pVdbe = v;
 
-//	r = sqlite3Init(v->db, &buf);
-//	if (r != SQLITE_OK) {
-//		raise(SIGABRT);
-//	}
-
-	// Strictly correct but doesn't affect the simplest example
-	// sqlite3VdbeRunOnlyOnce(v);
-	
 	// manually implement necessary calls from static method sqlite3Step
 	v->pc = 0;
 	v->db->nVdbeActive++;
@@ -250,6 +260,6 @@ int main(int argc, char **argv) {
 	}
 	v->db->nVdbeExec--;
 	v->db->nVdbeActive--;
-//	free(vc.uc.pCursor);
+	sqlite3_free(&s);
 	return 0;
 }
